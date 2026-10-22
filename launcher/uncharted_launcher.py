@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Launcher for the Windows port of Uncharted: The Nathan Drake Collection (Tkinter).
+"""Launcher for the Linux port of Uncharted: The Nathan Drake Collection (Tkinter).
 
 Chooses the game folder, which of the three games to start, the display and console options,
 and runs run.py with them as environment variables. Launcher options live in
@@ -410,7 +410,8 @@ class Launcher:
         self.card_hot = None
         self.info, self.available = None, {}
         self.update_box = None
-        root.title(f'{NAME} — The Nathan Drake Collection for Windows · by {AUTHOR}')
+        platform_name = 'Windows' if sys.platform == 'win32' else 'Linux'
+        root.title(f'{NAME} — The Nathan Drake Collection for {platform_name} · by {AUTHOR}')
         root.configure(bg=BG)
         self.dpi = root.winfo_fpixels('1i') / 96.0
         root.geometry(f'{self.px(1180)}x{self.px(860)}')
@@ -733,7 +734,8 @@ class Launcher:
             self.nav[name], self.nav_pills[name], self.nav_marks[name] = item, pill, mark
         tk.Frame(side, bg=BG).pack(fill='both', expand=True)
         self.side = side
-        self.side_note = tk.Label(side, text=_('Native port: the original PS4 game code runs directly on Windows.'),
+        platform_name = 'Windows' if sys.platform == 'win32' else 'Linux'
+        self.side_note = tk.Label(side, text=_(f'Native port: the original PS4 game code runs directly on {platform_name}.'),
                                   bg=BG, fg=MUTED, font=('Segoe UI', 9), justify='left',
                                   wraplength=side_w - 36)
         self.side_note.pack(anchor='w', padx=18, pady=(0, 18))

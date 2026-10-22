@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Prepares an Uncharted executable of the Nathan Drake Collection and starts bb-probe.exe.
+"""Prepares an Uncharted executable of the Nathan Drake Collection and starts bb-probe.
 
 BB_GAME_DIR   the game folder (CUSA02343, CUSA02320, ...; the one with eboot.bin)
 BB_GAME_DIR_U1 / _U2 / _U3   optional: the folder of a game that was dumped on its own; used for

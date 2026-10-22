@@ -32,7 +32,16 @@ PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).r
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 DATA_DIR = Path(os.environ.get('BB_DATA_DIR', PORT_DIR))
-CONFIG_DIR = Path(os.environ.get('APPDATA', Path.home())) / 'uncharted-launcher'
+def get_config_dir():
+    if os.environ.get('APPDATA'):
+        return Path(os.environ['APPDATA']) / 'uncharted-launcher'
+    legacy = Path.home() / 'uncharted-launcher'
+    if legacy.is_dir() and (legacy / 'settings.json').is_file():
+        return legacy
+    xdg = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config'))
+    return xdg / 'uncharted-launcher'
+
+CONFIG_DIR = get_config_dir()
 CONFIG_FILE = CONFIG_DIR / 'settings.json'
 NAME = 'Uncharted'
 AUTHOR = 'SuperMedo'
@@ -1308,10 +1317,11 @@ class Launcher:
             self.messagebox.showerror(NAME, _('This game is not in the chosen folder.'))
             return
         self.set_log('')
+        extra_kw = {'creationflags': NO_WINDOW} if sys.platform == 'win32' else {'start_new_session': True}
         try:
             self.process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(self.app),
                                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                            stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+                                            stderr=subprocess.STDOUT, **extra_kw)
         except OSError as error:
             self.append(_('Could not start: {}').format(error) + '\n')
             self.process = None
@@ -1368,7 +1378,7 @@ class Launcher:
                     stripped = item.strip()
                     if stripped.startswith(('STOP:', 'ERROR', 'GPU crash: the', 'Fault:')) or \
                             ('failed' in stripped and not stripped.startswith('GPU [')) or \
-                            stripped.startswith(('No eboot.bin', 'No big', 'Set BB_GAME_DIR', 'bb-probe.exe not found')):
+                            stripped.startswith(('No eboot.bin', 'No big', 'Set BB_GAME_DIR', 'bb-probe.exe not found', 'bb-probe not found')):
                         if not self.last_problem or stripped.startswith(('STOP:', 'GPU crash')):
                             self.last_problem = stripped
                     if 'Entering original x86-64 code' in item:
@@ -1583,19 +1593,31 @@ class Launcher:
 
 
 class GameJob:
-    """A Windows job holding run.py and everything it starts (the game, the next game of the
+    """A Windows job or POSIX session holding run.py and everything it starts (the game, the next game of the
     collection, an in-game restart), so Stop ends all of them."""
 
     def __init__(self, process):
-        kernel32 = ctypes.windll.kernel32
-        kernel32.CreateJobObjectW.restype = ctypes.c_void_p
-        self.handle = kernel32.CreateJobObjectW(None, None)
-        if self.handle:
-            kernel32.AssignProcessToJobObject(ctypes.c_void_p(self.handle), ctypes.c_void_p(int(process._handle)))
+        self.process = process
+        self.handle = None
+        if sys.platform == 'win32':
+            kernel32 = ctypes.windll.kernel32
+            kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+            self.handle = kernel32.CreateJobObjectW(None, None)
+            if self.handle:
+                kernel32.AssignProcessToJobObject(ctypes.c_void_p(self.handle), ctypes.c_void_p(int(process._handle)))
 
     def terminate(self):
         if self.handle:
             ctypes.windll.kernel32.TerminateJobObject(ctypes.c_void_p(self.handle), 1)
+        elif self.process:
+            try:
+                import signal
+                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+            except Exception:
+                try:
+                    self.process.terminate()
+                except Exception:
+                    pass
 
     def close(self):
         if self.handle:

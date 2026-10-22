@@ -29,16 +29,28 @@ def fail(message):
 
 
 def wait_for(pid):
-    kernel32 = ctypes.windll.kernel32
-    SYNCHRONIZE = 0x00100000
-    handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
-    if handle:
-        kernel32.WaitForSingleObject(handle, 30000)
-        kernel32.CloseHandle(handle)
+    if sys.platform == 'win32':
+        kernel32 = ctypes.windll.kernel32
+        SYNCHRONIZE = 0x00100000
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+        if handle:
+            kernel32.WaitForSingleObject(handle, 30000)
+            kernel32.CloseHandle(handle)
+    else:
+        import time
+        start = time.time()
+        while time.time() - start < 30:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+            time.sleep(0.1)
 
 
 def no_console():
     """Started without a console (the launcher): console programs must not open their own."""
+    if sys.platform != 'win32':
+        return 0
     return 0 if ctypes.windll.kernel32.GetConsoleWindow() else subprocess.CREATE_NO_WINDOW
 
 
@@ -46,8 +58,9 @@ def run_script(name, *args):
     # Inside the packaged executable (PyInstaller) the executable runs scripts itself.
     script = ['--script'] if getattr(sys, 'frozen', False) else []
     command = [sys.executable, *script, str(PORT / 'scripts' / name), *map(str, args)]
+    kw = {'creationflags': no_console()} if sys.platform == 'win32' else {}
     # stdin given: the output handles are passed explicitly (a windowed child would get none).
-    result = subprocess.run(command, stdin=subprocess.DEVNULL, creationflags=no_console())
+    result = subprocess.run(command, stdin=subprocess.DEVNULL, **kw)
     if result.returncode:
         sys.exit(result.returncode)
 
@@ -126,11 +139,12 @@ def main():
     if not env.get('BB_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['BB_FSR411_DIR'] = str(data / 'fsr4_411')
 
-    probe = Path(env['BB_PROBE']) if env.get('BB_PROBE') else find_executable('bb-probe.exe')
+    binary_name = 'bb-probe.exe' if sys.platform == 'win32' else 'bb-probe'
+    probe = Path(env['BB_PROBE']) if env.get('BB_PROBE') else find_executable(binary_name)
     if not probe or not probe.is_file():
-        fail('bb-probe.exe not found: build it with build.sh (MSYS2 CLANG64) or use a packaged build.')
+        fail(f'{binary_name} not found: build it with build.sh or use a packaged build.')
     # Development builds run from the MSYS2 tree: its CLANG64 DLLs (SDL3, FFmpeg, ...).
-    if not (probe.parent / 'SDL3.dll').is_file():
+    if sys.platform == 'win32' and not (probe.parent / 'SDL3.dll').is_file():
         clang64 = Path(env.get('MSYS2_ROOT', r'C:\msys64')) / 'clang64' / 'bin'
         if clang64.is_dir():
             env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
@@ -162,7 +176,8 @@ def main():
             command += ['--guest-argv', str(guest_argv)]
         loadexec.unlink(missing_ok=True)
         # No stdin: an inherited pipe (shells such as Git Bash) cost the game its console output.
-        code = subprocess.run([*command, *args], stdin=subprocess.DEVNULL, creationflags=no_console()).returncode
+        kw = {'creationflags': no_console()} if sys.platform == 'win32' else {}
+        code = subprocess.run([*command, *args], stdin=subprocess.DEVNULL, **kw).returncode
         if code != LOADEXEC_EXIT or not loadexec.is_file():
             return code
         lines = loadexec.read_text(encoding='utf-8', errors='replace').splitlines()

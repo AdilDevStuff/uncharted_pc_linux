@@ -27,6 +27,15 @@ import urllib.request
 import webbrowser
 import zipfile
 
+if sys.platform != 'win32':
+    _local_lib = str(Path.home() / '.local' / 'lib')
+    if _local_lib not in os.environ.get('LD_LIBRARY_PATH', '').split(os.pathsep):
+        if (Path(_local_lib) / 'libtk8.6.so').is_file():
+            _env = os.environ.copy()
+            _env['LD_LIBRARY_PATH'] = f"{_local_lib}:{_env.get('LD_LIBRARY_PATH', '')}".rstrip(':')
+            _env['TK_LIBRARY'] = str(Path(_local_lib) / 'tk8.6')
+            os.execvpe(sys.executable, [sys.executable, *sys.argv], _env)
+
 FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / 'scripts'))

@@ -845,6 +845,9 @@ class Launcher:
         fullscreen.bind('<Button-1>', lambda _e: self.var('fullscreen').set(not self.var('fullscreen').get()))
         self.pill(row, _('Add to Steam'), self.add_to_steam, background=SURFACE, padding=(14, 6)).pack(
             side='left', padx=(self.px(24), 0))
+        if sys.platform != 'win32':
+            self.pill(row, _('Add to Menu'), self.add_to_menu, background=SURFACE, padding=(14, 6)).pack(
+                side='left', padx=(self.px(8), 0))
         self.pill(row, _('Desktop shortcut'), self.shortcut, background=SURFACE, padding=(14, 6)).pack(
             side='left', padx=(self.px(8), 0))
         self.ready = tk.Label(shell, text='', bg=SURFACE, fg=MUTED, font=self.font_ui_sm,
@@ -1530,24 +1533,39 @@ class Launcher:
         shutil.rmtree(Path(self.app['user_dir'] or DATA_DIR / 'user') / 'cache', ignore_errors=True)
         self.messagebox.showinfo(NAME, _('Shader cache cleared. The next start stutters for a while as it is rebuilt.'))
 
+    def add_to_menu(self):
+        """Add launcher to the Linux applications menu (~/.local/share/applications)."""
+        try:
+            desktop_file = install_desktop_menu()
+            self.messagebox.showinfo(NAME, _('Launcher added to the applications menu.'))
+        except Exception as error:
+            self.messagebox.showerror(NAME, _('Could not add to menu: {}').format(error))
+
     def shortcut(self):
-        """Uncharted.lnk on the desktop."""
-        if FROZEN:
-            target, arguments, icon = sys.executable, '', f'{sys.executable},0'
+        """Uncharted shortcut on the desktop."""
+        if sys.platform == 'win32':
+            if FROZEN:
+                target, arguments, icon = sys.executable, '', f'{sys.executable},0'
+            else:
+                pythonw = Path(sys.executable).with_name('pythonw.exe')
+                target = str(pythonw if pythonw.exists() else sys.executable)
+                arguments, icon = Path(__file__).resolve(), PORT_DIR / 'launcher' / 'uncharted.ico'
+            script = ('$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath("Desktop")'
+                      '+"\\Uncharted.lnk");'
+                      f'$s.TargetPath="{target}";$s.WorkingDirectory="{PORT_DIR}";$s.IconLocation="{icon}";'
+                      + (f"$s.Arguments='\"{arguments}\"';" if arguments else '') + '$s.Save()')
+            result = subprocess.run(['powershell', '-NoProfile', '-Command', script], capture_output=True,
+                                    creationflags=NO_WINDOW)
+            if result.returncode == 0:
+                self.messagebox.showinfo(NAME, _('Shortcut created on the desktop.'))
+            else:
+                self.messagebox.showerror(NAME, result.stderr.decode(errors='replace')[:400])
         else:
-            pythonw = Path(sys.executable).with_name('pythonw.exe')
-            target = str(pythonw if pythonw.exists() else sys.executable)
-            arguments, icon = Path(__file__).resolve(), PORT_DIR / 'launcher' / 'uncharted.ico'
-        script = ('$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath("Desktop")'
-                  '+"\\Uncharted.lnk");'
-                  f'$s.TargetPath="{target}";$s.WorkingDirectory="{PORT_DIR}";$s.IconLocation="{icon}";'
-                  + (f"$s.Arguments='\"{arguments}\"';" if arguments else '') + '$s.Save()')
-        result = subprocess.run(['powershell', '-NoProfile', '-Command', script], capture_output=True,
-                                creationflags=NO_WINDOW)
-        if result.returncode == 0:
-            self.messagebox.showinfo(NAME, _('Shortcut created on the desktop.'))
-        else:
-            self.messagebox.showerror(NAME, result.stderr.decode(errors='replace')[:400])
+            try:
+                install_desktop_shortcut()
+                self.messagebox.showinfo(NAME, _('Shortcut created on the desktop.'))
+            except Exception as error:
+                self.messagebox.showerror(NAME, _('Could not create desktop shortcut: {}').format(error))
 
     def add_to_steam(self):
         """The collection in the Steam library (a non-Steam game that starts Uncharted.exe --play)."""
@@ -1680,6 +1698,63 @@ def install_update(target, wait_pid):
     return 0
 
 
+def create_desktop_entry(path):
+    """Create a Linux .desktop file at the given path."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if FROZEN:
+        exec_target = f'"{sys.executable}"'
+    else:
+        launcher_script = PORT_DIR / 'launcher' / 'uncharted_launcher.py'
+        exec_target = f'"{sys.executable}" "{launcher_script}"'
+    icon = PORT_DIR / 'launcher' / 'uncharted.png'
+    try:
+        icon_dir = Path.home() / '.local' / 'share' / 'icons' / 'hicolor' / '128x128' / 'apps'
+        icon_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(icon, icon_dir / 'uncharted.png')
+    except OSError:
+        pass
+
+    content = (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Uncharted: The Nathan Drake Collection\n"
+        "GenericName=Action Adventure Game\n"
+        "Comment=Native Linux launcher for Uncharted: The Nathan Drake Collection\n"
+        f"Exec={exec_target}\n"
+        f"Path={PORT_DIR}\n"
+        f"Icon={icon}\n"
+        "Terminal=false\n"
+        "Categories=Game;ActionGame;\n"
+        "StartupWMClass=uncharted_launcher.py\n"
+    )
+    path.write_text(content, encoding='utf-8')
+    try:
+        path.chmod(0o755)
+    except OSError:
+        pass
+
+
+def install_desktop_menu():
+    """Install to ~/.local/share/applications/uncharted-launcher.desktop."""
+    apps_dir = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share')) / 'applications'
+    desktop_file = apps_dir / 'uncharted-launcher.desktop'
+    create_desktop_entry(desktop_file)
+    try:
+        subprocess.run(['update-desktop-database', str(apps_dir)], capture_output=True)
+    except OSError:
+        pass
+    return desktop_file
+
+
+def install_desktop_shortcut():
+    """Install to ~/Desktop/uncharted.desktop."""
+    desktop_dir = Path(os.environ.get('XDG_DESKTOP_DIR') or (Path.home() / 'Desktop'))
+    desktop_file = desktop_dir / 'uncharted.desktop'
+    create_desktop_entry(desktop_file)
+    return desktop_file
+
+
 def play_without_window(settings):
     """--play: the game with the saved settings (shortcuts, Steam); output to the console when
     there is one and to <saves folder>/last_run.log."""
@@ -1708,6 +1783,14 @@ def main():
         sys.exit(install_update(args[1], args[2]))
     if FROZEN and UPDATE_DIR not in PORT_DIR.parents:
         shutil.rmtree(UPDATE_DIR, ignore_errors=True)  # what a finished update left behind
+    if '--add-to-menu' in args or '--install-menu' in args:
+        desktop_file = install_desktop_menu()
+        print(f'Installed {desktop_file}')
+        sys.exit(0)
+    if '--desktop-shortcut' in args:
+        desktop_file = install_desktop_shortcut()
+        print(f'Installed {desktop_file}')
+        sys.exit(0)
     settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
     if '--play' in args and game_available(settings, settings['start']):
         sys.exit(play_without_window(settings))

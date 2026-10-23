@@ -605,6 +605,41 @@ static size_t prologue_bytes(const unsigned char *f) {
     if (f[4]==0x48 && f[5]==0x81 && f[6]==0xec) return 11;
     return 0;
 }
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+
+/* Memory within rel32 reach (+/- 2 GiB) of the image for thunks and guest hooks. */
+static unsigned char *near_image_memory(size_t size) {
+    unsigned char *memory=NULL;
+#ifdef _WIN32
+    /* rel32 jumps: within 2 GiB of the image. */
+    uint64_t end_of_image=round_page(guest_image_size ? guest_image_size : 1);
+    uint64_t base=((uint64_t)(uintptr_t)image+end_of_image+(32u<<20)+0xffff)&~(uint64_t)0xffff;
+    for (uint64_t step=0;!memory && step<(1900ull<<20);step+=1u<<16) {
+        memory=VirtualAlloc((void *)(uintptr_t)(base+step),size,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE);
+        if (!memory && (uint64_t)(uintptr_t)image>step+(2u<<20))
+            memory=VirtualAlloc((void *)(uintptr_t)(((uint64_t)(uintptr_t)image-step-(2u<<20))&~(uint64_t)0xffff),
+                                size,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE);
+    }
+#else
+    /* rel32 jumps: within 2 GiB of the image. */
+    uint64_t end_of_image=round_page(guest_image_size ? guest_image_size : 1);
+    uint64_t base=((uint64_t)(uintptr_t)image+end_of_image+(32u<<20)+0xffff)&~(uint64_t)0xffff;
+    for (uint64_t step=0;!memory && step<(1900ull<<20);step+=1u<<16) {
+        void *p=mmap((void *)(uintptr_t)(base+step),size,PROT_READ|PROT_WRITE|PROT_EXEC,
+                     MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE,-1,0);
+        if (p!=MAP_FAILED) { memory=(unsigned char *)p; break; }
+        if ((uint64_t)(uintptr_t)image>step+(2u<<20)) {
+            p=mmap((void *)(uintptr_t)(((uint64_t)(uintptr_t)image-step-(2u<<20))&~(uint64_t)0xffff),
+                   size,PROT_READ|PROT_WRITE|PROT_EXEC,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE,-1,0);
+            if (p!=MAP_FAILED) { memory=(unsigned char *)p; break; }
+        }
+    }
+#endif
+    return memory;
+}
+
 static void install_guest_hooks(Segment *segments, uint64_t ns) {
     const char *spec=getenv("BB_GUEST_HOOKS");
     if (!spec || !*spec) return;
@@ -613,17 +648,7 @@ static void install_guest_hooks(Segment *segments, uint64_t ns) {
     uint64_t end_of_image=0;
     for (uint64_t s=0;s<ns;++s) if (segments[s].address+segments[s].size>end_of_image) end_of_image=segments[s].address+segments[s].size;
     guest_image_size=end_of_image;
-    unsigned char *thunks=NULL;
-#ifdef _WIN32
-    /* rel32 jumps: the thunks within 2 GiB of the image. */
-    uint64_t base=((uint64_t)(uintptr_t)image+end_of_image+0xffff)&~(uint64_t)0xffff;
-    for (uint64_t step=0;!thunks && step<(1900ull<<20);step+=1u<<16) {
-        thunks=VirtualAlloc((void *)(uintptr_t)(base+step),(size_t)MAX_HOOKS*THUNK,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE);
-        if (!thunks && (uint64_t)(uintptr_t)image>step+(2u<<20))
-            thunks=VirtualAlloc((void *)(uintptr_t)(((uint64_t)(uintptr_t)image-step-(2u<<20))&~(uint64_t)0xffff),
-                                (size_t)MAX_HOOKS*THUNK,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE);
-    }
-#endif
+    unsigned char *thunks=near_image_memory((size_t)MAX_HOOKS*THUNK);
     if (!thunks) fail("BB_GUEST_HOOKS: no thunk memory near the image");
     for (const char *p=spec;*p;) {
         char *end;
@@ -671,23 +696,6 @@ static void install_guest_hooks(Segment *segments, uint64_t ns) {
  * the expected bytes calls a host function first, with rdi, rsi, the image base and r14 (Microsoft
  * x64 convention on every host). The thunk keeps the guest's registers and flags, so it also
  * works inside a function. */
-static unsigned char *near_image_memory(size_t size) {
-    unsigned char *memory=NULL;
-#ifdef _WIN32
-    /* rel32 jumps: within 2 GiB of the image. */
-    uint64_t end_of_image=round_page(guest_image_size ? guest_image_size : 1);
-    uint64_t base=((uint64_t)(uintptr_t)image+end_of_image+(32u<<20)+0xffff)&~(uint64_t)0xffff;
-    for (uint64_t step=0;!memory && step<(1900ull<<20);step+=1u<<16) {
-        memory=VirtualAlloc((void *)(uintptr_t)(base+step),size,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE);
-        if (!memory && (uint64_t)(uintptr_t)image>step+(2u<<20))
-            memory=VirtualAlloc((void *)(uintptr_t)(((uint64_t)(uintptr_t)image-step-(2u<<20))&~(uint64_t)0xffff),
-                                size,MEM_RESERVE|MEM_COMMIT,PAGE_EXECUTE_READWRITE);
-    }
-#else
-    (void)size;
-#endif
-    return memory;
-}
 static void install_game_callbacks(Segment *segments, uint64_t ns, uint64_t image_size) {
     size_t count=0;
     const RuntimeGuestCallback *callbacks=runtime_guest_callbacks(&count);

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Uncharted: The Nathan Drake Collection
+GenericName=Action Adventure Game
+Comment=Native Linux port of Uncharted: The Nathan Drake Collection
+Exec=uncharted %F
+Icon=uncharted
+Terminal=false
+Categories=Game;ActionGame;
+StartupWMClass=uncharted_launcher.py
+Keywords=game;ps4;uncharted;nathan;drake;collection;

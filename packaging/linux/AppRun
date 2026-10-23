@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -e
+
+SELF=$(readlink -f "$0")
+HERE=${SELF%/*}
+
+export PATH="${HERE}/bin:${HERE}/out:${PATH}"
+export LD_LIBRARY_PATH="${HERE}/out/gpu:${HERE}/lib:${LD_LIBRARY_PATH:-}"
+
+# XDG data directory for saves, logs, and configs
+export BB_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/uncharted"
+mkdir -p "$BB_DATA_DIR"
+
+cd "$HERE"
+
+if [ "${1:-}" = "--play" ]; then
+    exec python3 launcher/uncharted_launcher.py --play "$@"
+elif [ "${1:-}" = "--probe" ]; then
+    shift
+    exec out/bb-probe "$@"
+elif [ "${1:-}" = "--run" ]; then
+    shift
+    exec python3 run.py "$@"
+else
+    exec python3 launcher/uncharted_launcher.py "$@"
+fi

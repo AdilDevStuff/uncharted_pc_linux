@@ -83,7 +83,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
         with:
           tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
-          name: Uncharted: The Nathan Drake Collection ${{ github.event.inputs.tag_name || github.ref_name }}
+          name: "Uncharted: The Nathan Drake Collection ${{ github.event.inputs.tag_name || github.ref_name }}"
           draft: false
           prerelease: false
           generate_release_notes: true

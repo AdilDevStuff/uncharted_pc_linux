@@ -112,8 +112,8 @@ public:
     /// overlapping it is dirty, not only one starting at the address (copies moving textures).
     void InvalidateMemoryFromGPU(VAddr address, size_t max_size, bool whole_range = false);
 
-    /// bbport: after the player switched between controller and keyboard, the button prompt
-    /// pictures are uploaded again (button_prompts.h). GPU thread, once per submission.
+    /// bbport: after the button prompts switched between the game's pictures, the keyboard's and
+    /// Xbox, the button prompt pictures are uploaded again (button_prompts.h). GPU thread, once per submission.
     void UpdateButtonPrompts();
 
     /// Evicts any images that overlap the unmapped range.
@@ -418,6 +418,8 @@ private:
     std::unordered_set<ImageId> download_images;
     u64 total_used_memory = 0;
     u64 registered_image_bytes = 0; ///< bbport: guest bytes of registered images (diagnostics)
+    bool tight_budget = false;                  ///< bbport: card under ~5 GB
+    std::atomic<u64> pending_free_bytes{0};     ///< bbport: deleted, not yet destroyed
     u64 gc_evictions = 0, gc_downloads = 0; ///< bbport: pressure report
     std::chrono::steady_clock::time_point gc_report_time{};
     u64 trigger_gc_memory = 0;

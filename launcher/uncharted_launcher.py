@@ -59,8 +59,14 @@ NAME = 'Uncharted'
 AUTHOR = 'SuperMedo'
 # This build; GitHub release tags are v<VERSION> (their digits are compared).
 VERSION = '0.3.9'
-RELEASES_API = 'https://api.github.com/repos/Supermedo/uncharted_pc/releases/latest'
-RELEASES_PAGE = 'https://github.com/Supermedo/uncharted_pc/releases/latest'
+LINUX_REPO = 'AdilDevStuff/uncharted_pc_linux'
+UPSTREAM_REPO = 'Supermedo/uncharted_pc'
+if sys.platform != 'win32':
+    RELEASES_API = f'https://api.github.com/repos/{LINUX_REPO}/releases/latest'
+    RELEASES_PAGE = f'https://github.com/{LINUX_REPO}/releases/latest'
+else:
+    RELEASES_API = f'https://api.github.com/repos/{UPSTREAM_REPO}/releases/latest'
+    RELEASES_PAGE = f'https://github.com/{UPSTREAM_REPO}/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'uncharted-update'
 # Never copied over an installation by an update (the package does not hold them either).
 USER_FILES = ('user', 'out', 'art', 'bbport.ini', 'input.ini', 'last_run.log')
@@ -1826,6 +1832,9 @@ class Launcher:
                   lambda: threading.Thread(target=self.check_update, args=(True,), daemon=True).start()
                   ).pack(side='left')
         self.pill(holder, _('Releases page'), lambda: webbrowser.open(RELEASES_PAGE)).pack(side='left', padx=(8, 0))
+        if sys.platform != 'win32' and (PORT_DIR / 'update.sh').is_file():
+            self.pill(holder, _('Update & Rebuild from Upstream'), self.update_and_rebuild, kind='primary').pack(
+                side='left', padx=(8, 0))
 
     def build_log(self):
         tk = self.tk
@@ -2172,7 +2181,14 @@ class Launcher:
         if self.process:
             self.messagebox.showinfo(NAME, _('Close the game before updating.'))
             return
-        if not FROZEN or not url:  # a source tree updates with git
+        is_appimage = bool(os.environ.get('APPIMAGE'))
+        if not FROZEN and not is_appimage:  # a source tree updates with update.sh / git
+            if (PORT_DIR / 'update.sh').is_file():
+                self.update_and_rebuild()
+            else:
+                webbrowser.open(page)
+            return
+        if not url:
             webbrowser.open(page)
             return
         if not self.messagebox.askyesno(NAME, _(
@@ -2188,8 +2204,28 @@ class Launcher:
             try:
                 shutil.rmtree(UPDATE_DIR, ignore_errors=True)
                 UPDATE_DIR.mkdir(parents=True, exist_ok=True)
-                archive = UPDATE_DIR / 'update.zip'
                 request = urllib.request.Request(url, headers={'User-Agent': 'uncharted-launcher'})
+                if is_appimage:
+                    target_appimage = Path(os.environ['APPIMAGE'])
+                    temp_appimage = UPDATE_DIR / target_appimage.name
+                    with urllib.request.urlopen(request, timeout=120) as response, open(temp_appimage, 'wb') as out:
+                        total, done, shown = int(response.headers.get('Content-Length') or 0), 0, -1
+                        while chunk := response.read(1 << 20):
+                            out.write(chunk)
+                            done += len(chunk)
+                            percent = done * 100 // total if total else 0
+                            if percent != shown:
+                                shown = percent
+                                self.ui_calls.put(lambda p=percent: progress(p))
+                    temp_appimage.chmod(0o755)
+                    # Replace running AppImage and restart
+                    temp_appimage.replace(target_appimage)
+                    subprocess.Popen([str(target_appimage)], cwd=str(target_appimage.parent),
+                                     stdin=subprocess.DEVNULL, start_new_session=True)
+                    self.ui_calls.put(self.close)
+                    return
+
+                archive = UPDATE_DIR / 'update.zip'
                 with urllib.request.urlopen(request, timeout=60) as response, open(archive, 'wb') as out:
                     total, done, shown = int(response.headers.get('Content-Length') or 0), 0, -1
                     while chunk := response.read(1 << 20):
@@ -2216,6 +2252,66 @@ class Launcher:
                     self.messagebox.showerror(NAME, _('Update failed: {}').format(error))
                 self.ui_calls.put(failed)
         threading.Thread(target=work, daemon=True).start()
+
+    def update_and_rebuild(self):
+        """Fetches latest code from Supermedo's repository and rebuilds the Linux binaries."""
+        if self.process:
+            self.messagebox.showinfo(NAME, _('Close the game before updating.'))
+            return
+        update_script = PORT_DIR / 'update.sh'
+        if not update_script.is_file():
+            self.messagebox.showerror(NAME, _('update.sh not found.'))
+            return
+
+        window = self.tk.Toplevel(self.root)
+        window.title(_('Updating from Upstream…'))
+        window.configure(bg=PANEL)
+        window.transient(self.root)
+        window.geometry(f"{self.px(640)}x{self.px(420)}")
+
+        shell = self.tk.Frame(window, bg=PANEL)
+        shell.pack(fill='both', expand=True, padx=self.px(16), pady=self.px(16))
+
+        title = self.tk.Label(shell, text=_('Updating code from Supermedo and rebuilding Linux version…'),
+                              bg=PANEL, fg=GOLD, font=self.font_ui_md)
+        title.pack(anchor='w', pady=(0, 8))
+
+        text = self.tk.Text(shell, bg=BG, fg=TEXT, font=self.font_console, wrap='word',
+                            highlightthickness=1, highlightbackground=GOLD_DIM)
+        text.pack(fill='both', expand=True)
+
+        close_btn = self.pill(shell, _('Close'), window.destroy, kind='primary')
+        close_btn.pack(anchor='e', pady=(10, 0))
+        close_btn.configure(state='disabled')
+
+        def append_log(line):
+            text.insert('end', line)
+            text.see('end')
+
+        def worker():
+            try:
+                proc = subprocess.Popen(
+                    ['bash', str(update_script), '--force'],
+                    cwd=str(PORT_DIR),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1
+                )
+                for line in proc.stdout:
+                    self.ui_calls.put(lambda l=line: append_log(l))
+                proc.wait()
+                if proc.returncode == 0:
+                    self.ui_calls.put(lambda: title.configure(text=_('Update and build completed successfully!'), fg='#5cb85c'))
+                else:
+                    self.ui_calls.put(lambda: title.configure(text=_('Update or build failed (code {}).').format(proc.returncode), fg='#e07a4f'))
+            except Exception as e:
+                self.ui_calls.put(lambda err=str(e): append_log(f"\nError: {err}\n"))
+                self.ui_calls.put(lambda: title.configure(text=_('Update failed.'), fg='#e07a4f'))
+            finally:
+                self.ui_calls.put(lambda: close_btn.configure(state='normal'))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def clear_cache(self):
         if self.process:
@@ -2505,7 +2601,6 @@ class GameJob:
     collection, an in-game restart), so Stop ends all of them."""
 
     def __init__(self, process):
-    def __init__(self, process):
         self.process = process
         self.handle = None
         self.kernel32 = None
@@ -2570,14 +2665,18 @@ def version_tuple(text):
 
 
 def latest_release():
-    """(version, zip URL, page URL) of the newest GitHub release."""
+    """(version, asset URL, page URL) of the newest GitHub release."""
     request = urllib.request.Request(RELEASES_API, headers={'Accept': 'application/vnd.github+json',
                                                             'User-Agent': 'uncharted-launcher'})
     with urllib.request.urlopen(request, timeout=15) as response:
         release = json.load(response)
-    version = '.'.join(re.findall(r'\d+', release['tag_name']))
-    url = next((asset['browser_download_url'] for asset in release.get('assets', [])
-                if asset.get('name', '').lower().endswith('.zip')), None)
+    version = '.'.join(re.findall(r'\d+', release.get('tag_name', '')))
+    if sys.platform != 'win32':
+        url = next((asset['browser_download_url'] for asset in release.get('assets', [])
+                    if asset.get('name', '').endswith('.AppImage')), None)
+    else:
+        url = next((asset['browser_download_url'] for asset in release.get('assets', [])
+                    if asset.get('name', '').lower().endswith('.zip')), None)
     return version, url, release.get('html_url') or RELEASES_PAGE
 
 
@@ -2586,11 +2685,20 @@ def install_update(target, wait_pid):
     waits for the old launcher to close, copies this version over TARGET (never the saves,
     settings or art) and starts it."""
     target = Path(target)
-    kernel = ctypes.windll.kernel32
-    handle = kernel.OpenProcess(0x00100000, False, int(wait_pid))  # SYNCHRONIZE
-    if handle:
-        kernel.WaitForSingleObject(handle, 60000)
-        kernel.CloseHandle(handle)
+    wait_pid = int(wait_pid)
+    if sys.platform == 'win32':
+        kernel = ctypes.windll.kernel32
+        handle = kernel.OpenProcess(0x00100000, False, wait_pid)  # SYNCHRONIZE
+        if handle:
+            kernel.WaitForSingleObject(handle, 60000)
+            kernel.CloseHandle(handle)
+    else:
+        for _ in range(60):
+            try:
+                os.kill(wait_pid, 0)
+                time.sleep(0.5)
+            except OSError:
+                break
     ignore = shutil.ignore_patterns(*USER_FILES)
     for attempt in range(30):
         try:
@@ -2599,11 +2707,15 @@ def install_update(target, wait_pid):
         except OSError:  # a file still in use: the old launcher is closing
             time.sleep(1)
     else:
-        ctypes.windll.user32.MessageBoxW(None, _('Could not install the update. Download it from the '
-                                                 'releases page.'), NAME, 0x10)
+        if sys.platform == 'win32':
+            ctypes.windll.user32.MessageBoxW(None, _('Could not install the update. Download it from the '
+                                                     'releases page.'), NAME, 0x10)
         webbrowser.open(RELEASES_PAGE)
         return 1
-    subprocess.Popen([str(target / 'Uncharted.exe')], cwd=str(target))
+    if sys.platform == 'win32':
+        subprocess.Popen([str(target / 'Uncharted.exe')], cwd=str(target))
+    else:
+        subprocess.Popen([sys.executable, str(target / 'launcher' / 'uncharted_launcher.py')], cwd=str(target))
     return 0
 
 

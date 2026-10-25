@@ -100,6 +100,8 @@ public:
 
     /// Flushes any GPU modified buffer in the logical page range back to CPU memory.
     void ReadMemory(VAddr device_addr, u64 size, bool is_write = false, bool assume_locks = false);
+    /// bbport: flushes a small GPU-written buffer (<= 64 bytes) to guest memory (deferred without GPU stalls).
+    void ReadSmallMemory(VAddr device_addr, u64 size);
 
     /// Finds a buffer for the specified region.
     [[nodiscard]] std::pair<const Buffer*, u64> ObtainBuffer(VAddr device_addr, u32 size,
@@ -177,6 +179,7 @@ private:
     void EnsureResident(const Buffer* arena, u64 first_block, u64 last_block);
 
     void DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size);
+    void DownloadSmallMemory(const Buffer* arena, VAddr device_addr, u64 size);
 
     bool SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size, bool is_written,
                            bool is_texel_buffer);

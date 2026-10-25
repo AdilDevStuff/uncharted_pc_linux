@@ -93,9 +93,8 @@ void TextureCache::ProcessDownloadImages() {
 // writes are now copied back after each use without waiting. BB_TINY_READBACK=0: off.
 bool TextureCache::TinyReadback(const Image& image) {
     static const bool enabled = [] {
-        // On for Uncharted 2 (run.py): its aim blur; elsewhere it costs ~13% (U3 square).
         const char* env = std::getenv("BB_TINY_READBACK");
-        return env && env[0] == '1';
+        return !(env && env[0] == '0');
     }();
     const auto& size = image.info.size;
     return enabled && image.info.guest_address != 0 && size.depth == 1 &&

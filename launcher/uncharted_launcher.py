@@ -191,13 +191,12 @@ FIXES = {
         {'on': {'BB_SCALAR_COPY64_SYNC': '2', 'BB_SCALAR_COPY64_DEFER': '1'},
          'off': {'BB_SCALAR_COPY64_SYNC': '0', 'BB_SCALAR_COPY64_DEFER': '0'}}),
     'fix_tiny_readback': (
-        'Aim and turret focus (Uncharted 2)',
-        'Enemies stay in focus when aiming. Automatic: on in Uncharted 2 only; elsewhere it costs about 13%.',
+        'Aim and turret focus',
+        'Enemies and depth of field stay in focus when aiming blur. Automatic: on.',
         {'on': {'BB_TINY_READBACK': '1'}, 'off': {'BB_TINY_READBACK': '0'}}),
     'fix_small_buffers': (
-        'Brightness flicker fix',
-        'Copies small GPU results back every frame (auto exposure). Automatic: off; it halved the frame '
-        'rate in Uncharted 3\'s Cartagena square.',
+        'Auto-exposure and brightness fix',
+        'Copies small GPU results back (fixes auto exposure / dark interior in U3 Chapter 14 and weapon textures). Automatic: on.',
         {'on': {'BB_READBACK_SMALL_BUFFERS': '1'}, 'off': {'BB_READBACK_SMALL_BUFFERS': '0'}}),
     'fix_vram': (
         'Small video memory mode',

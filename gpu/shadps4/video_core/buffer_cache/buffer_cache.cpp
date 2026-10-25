@@ -1038,6 +1038,73 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     memory_tracker->UnmarkRegionAsGpuModified(device_addr, size);
 }
 
+void BufferCache::ReadSmallMemory(VAddr device_addr, u64 size) {
+    const auto flush_request = [this, device_addr, size] {
+        const u32 first_block = device_addr >> block_shift;
+        const u32 last_block = (device_addr + size - 1) >> block_shift;
+        const auto* arena = GetArena(first_block, last_block);
+        if (!arena) {
+            return;
+        }
+        DownloadSmallMemory(arena, device_addr, size);
+    };
+    flush_request();
+}
+
+void BufferCache::DownloadSmallMemory(const Buffer* arena, VAddr device_addr, u64 size) {
+    boost::container::small_vector<vk::BufferCopy, 1> copies;
+    u64 total_size_bytes = 0;
+    const VAddr arena_base = arena->cpu_addr;
+    memory_tracker->ForEachDownloadRange<false>(device_addr, size, [&](u64 address, u64 size) {
+        const auto add_download = [&](VAddr start, VAddr end) {
+            const u64 new_offset = start - arena_base;
+            const u64 new_size = end - start;
+            copies.push_back(vk::BufferCopy{
+                .srcOffset = new_offset,
+                .dstOffset = total_size_bytes,
+                .size = new_size,
+            });
+            constexpr u64 align = 64ULL;
+            constexpr u64 mask = ~(align - 1ULL);
+            total_size_bytes += (new_size + align - 1) & mask;
+        };
+        gpu_modified_ranges.ForEachInRange(address, size, add_download);
+        gpu_modified_ranges.Subtract(address, size);
+    });
+    if (total_size_bytes == 0) {
+        return;
+    }
+    static const bool sync = [] {
+        const char* env = std::getenv("BB_READBACK_SMALL_BUFFERS_SYNC");
+        return env && env[0] == '1';
+    }();
+    const auto download = staging_pool.Request(total_size_bytes, VideoCore::MemoryType::HostCached, 16, !sync);
+    for (auto& copy : copies) {
+        copy.dstOffset += download.offset;
+    }
+    runtime.CopyBuffer(arena, download.buffer, copies);
+    if (sync) {
+        scheduler.Finish();
+        download.Invalidate();
+        for (const auto& copy : copies) {
+            auto* dst_addr = std::bit_cast<u8*>(arena_base + copy.srcOffset);
+            const u8* data = download.mapped + (copy.dstOffset - download.offset);
+            memory->TryWriteBacking(dst_addr, data, copy.size);
+        }
+    } else {
+        scheduler.DeferPriorityOperation([this, arena_base, copies, download] {
+            download.Invalidate();
+            for (const auto& copy : copies) {
+                auto* dst_addr = std::bit_cast<u8*>(arena_base + copy.srcOffset);
+                const u8* data = download.mapped + (copy.dstOffset - download.offset);
+                memory->TryWriteBacking(dst_addr, data, copy.size);
+            }
+            staging_pool.FreeDeferred(download);
+        });
+    }
+    memory_tracker->UnmarkRegionAsGpuModified(device_addr, size);
+}
+
 namespace {
 // bbport: BB_BUFFER_STATS=1 — how buffer bindings reach the GPU, by guest region (256 MiB),
 // printed every 5 s: small read-only copies into the stream buffer, arena bindings, and the

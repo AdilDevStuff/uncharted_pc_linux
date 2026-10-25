@@ -230,7 +230,7 @@ def main():
             else:
                 env.pop('BB_GPU_MERGE', None)
         if player_tiny is None:
-            env['BB_TINY_READBACK'] = '1' if exe == EXECUTABLES['u2'] else '0'
+            env['BB_TINY_READBACK'] = '1'
         # Its mesh raycaster copies land in guest memory too (iSubMesh after checkpoints).
         if player_copy is None:
             env['BB_SCALAR_COPY64_SYNC'] = '2' if exe == EXECUTABLES['u2'] else '0'

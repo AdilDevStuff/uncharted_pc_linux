@@ -94,9 +94,20 @@ def locate(env, name):
 
 
 def game_cheats(enabled, exe):
-    """BB_CHEATS ("u1:health,u2:ammo") reduced to the running executable's own entries ("health")."""
+    """BB_CHEATS ("u1:health,u2:ammo" or "health,ammo") reduced to the running executable's own entries ("health")."""
     key = next((k for k, name in EXECUTABLES.items() if name == exe), None)
-    return ','.join(c.split(':', 1)[1] for c in enabled.split(',') if key and c.startswith(f'{key}:'))
+    cheats = []
+    for c in enabled.split(','):
+        c = c.strip()
+        if not c:
+            continue
+        if ':' in c:
+            game_prefix, cheat = c.split(':', 1)
+            if key and game_prefix == key:
+                cheats.append(cheat)
+        else:
+            cheats.append(c)
+    return ','.join(cheats)
 
 
 def prepare(game, exe, out):
@@ -254,7 +265,7 @@ def main():
         this = ['--run'] if getattr(sys, 'frozen', False) else [str(Path(__file__).resolve())]
         env['BB_EXE'] = exe
         env['BB_CHEATS'] = game_cheats(all_cheats, exe)
-        patches = cheats.build(game / exe, out, [c for c in env['BB_CHEATS'].split(',') if c])
+        patches = cheats.build(game / file, out, [c for c in env['BB_CHEATS'].split(',') if c])
         env['BB_RESTART_COMMAND'] = subprocess.list2cmdline([sys.executable, *this, '--after', str(os.getpid()), *args])
         command = [str(probe), str(out / 'boot-linked.bin'), '--content-profile', str(out / 'content.bin'),
                    '--app0', str(game), '--user', str(user_dir), '--timeout', env.get('BB_TIMEOUT', '0')]

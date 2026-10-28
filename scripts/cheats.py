@@ -49,10 +49,24 @@ def compile_cheats(path, cheats):
     """[(address, replacement bytes)] for the enabled cheats; reasons go to stdout."""
     data = Path(path).read_bytes()
     table = PATCHES.get(hashlib.sha256(data).hexdigest())
+    elf, _header, program_headers, _segments, _missing = prepare.parse_self(data)
+    if table is None:
+        # Fallback: check if the code matches known patch addresses for any version
+        for candidate_table in PATCHES.values():
+            matched = False
+            for name in cheats:
+                if name in candidate_table:
+                    addr, orig, _ = candidate_table[name]
+                    orig_bytes = bytes.fromhex(orig)
+                    if image_bytes(elf, program_headers, addr, len(orig_bytes)) == orig_bytes:
+                        matched = True
+                        break
+            if matched:
+                table = candidate_table
+                break
     if table is None:
         print(f'Cheats: {Path(path).name} is not a supported version; none applied')
         return []
-    elf, _header, program_headers, _segments, _missing = prepare.parse_self(data)
     writes = []
     for name in cheats:
         if name not in table:
